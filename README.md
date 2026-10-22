@@ -1,40 +1,121 @@
-# devops-k8s-pipeline
+# 🚀 DevOps K8s Pipeline
 
-A production-grade Kubernetes deployment pipeline for a Node.js REST API, multi-stage Docker builds, Sealed Secrets, RBAC, NetworkPolicy, HPA, Helm, Prometheus/Grafana observability, and a GitHub Actions CI/CD pipeline with vulnerability scanning, all deployed and verified together on a live cluster.
+> **Production-grade Kubernetes deployment pipeline** for a Node.js REST API — multi-stage Docker builds, Sealed Secrets, RBAC, NetworkPolicy, HPA, Helm, Prometheus/Grafana observability, and GitHub Actions CI/CD with vulnerability scanning, all deployed and verified on a live cluster.
 
-## Architecture
+[![Build Status](https://img.shields.io/github/actions/workflow/status/devscale-ds-tn/devops-k8s-pipeline/build-push-deploy.yaml?branch=main&label=CI%2FCD)](https://github.com/devscale-ds-tn/devops-k8s-pipeline/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-18+-green?logo=node.js)](https://nodejs.org/)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.25+-blue?logo=kubernetes)](https://kubernetes.io/)
+[![Docker](https://img.shields.io/badge/Docker-Multi--stage-blue?logo=docker)](https://docker.com/)
+[![Helm](https://img.shields.io/badge/Helm-Chart-0f1689?logo=helm)](https://helm.sh/)
+[![Trivy](https://img.shields.io/badge/Security-Trivy-red?logo=trivy)](https://aquasecurity.github.io/trivy/)
+[![Prometheus](https://img.shields.io/badge/Monitoring-Prometheus%2FGrafana-orange?logo=prometheus)](https://prometheus.io/)
+
+---
+
+## 📋 Table of Contents
+
+- [🎯 Overview](#-overview)
+- [✨ Features](#-features)
+- [🏗️ Architecture](#️-architecture)
+- [📁 Repository Structure](#-repository-structure)
+- [🚀 Quick Start](#-quick-start)
+- [☸️ Kubernetes Manifests](#️-kubernetes-manifests)
+- [🔐 Security Design](#-security-design)
+- [🔒 Sealed Secrets Workflow](#-sealed-secrets-workflow)
+- [🛡️ RBAC](#️-rbac)
+- [📈 HPA & metrics-server](#-hpa--metrics-server)
+- [📦 Helm Chart](#-helm-chart)
+- [⚙️ CI/CD Pipeline](#️-ci-cd-pipeline)
+- [🔍 Vulnerability Scanning (Trivy)](#-vulnerability-scanning-trivy)
+- [📊 Observability (Prometheus + Grafana)](#-observability-prometheus--grafana)
+- [🐛 Troubleshooting](#-troubleshooting)
+- [🛠️ Tech Stack](#️-tech-stack)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+
+---
+
+## 🎯 Overview
+
+This is a **complete, production-ready DevOps pipeline** that takes a Node.js REST API from code to a live Kubernetes cluster. Every layer is designed for security, scalability, and observability:
+
+- **Multi-stage Docker builds** — small, non-root runtime images
+- **GitHub Actions CI/CD** — build → Trivy scan → push to GHCR → manual deploy gate
+- **Sealed Secrets** — encrypted credentials safe to commit to a public repo
+- **RBAC + NetworkPolicy** — least-privilege access, default-deny networking
+- **Horizontal Pod Autoscaler (HPA)** — environment-tiered autoscaling
+- **Prometheus + Grafana** — full observability with custom app metrics
+- **ServiceMonitor** — automated Prometheus scraping via `prom-client` instrumentation
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| 🐳 **Multi-stage Docker** | Build stage deps, runtime stage only what's needed; non-root user |
+| 🔄 **GitHub Actions CI/CD** | Build, scan, push on every push; manual deploy gate via `workflow_dispatch` |
+| 🛡️ **Trivy Scanning** | Fails closed on HIGH/CRITICAL CVEs — no image deploys unless clean |
+| 🔐 **Sealed Secrets** | Client-side encrypted secrets, decrypted only in-cluster |
+| 🔒 **RBAC** | Dedicated ServiceAccount, least-privilege Role, no token automount |
+| 🚫 **NetworkPolicy** | Default-deny ingress, explicit allow only from ingress-nginx |
+| 📈 **HPA** | CPU-based autoscaling, tiered bounds per environment (dev/prod) |
+| 📊 **Observability** | Prometheus + Grafana, custom app metrics via `prom-client` |
+| ☸️ **Helm** | Full Helm chart with dev/prod overrides, namespace pre-create hook |
+
+---
+
+## 🏗️ Architecture
 
 > Rendered as Mermaid rather than a static PNG, GitHub renders it natively, and it stays in sync with the repo instead of going stale as a binary asset.
 
 ```mermaid
-flowchart LR
-    Dev[Developer] -->|git push| GH[GitHub Repo]
-    GH --> CI[GitHub Actions: build-push-deploy.yaml]
-    CI -->|docker build| Image[Docker Image]
-    CI -->|trivy scan --exit-code 1| Scan{Trivy Gate}
-    Scan -->|pass| GHCR[(GHCR Registry - SHA tagged)]
-    Scan -->|fail| Block[Pipeline blocked]
-    CI -->|helm upgrade --install| Cluster
+flowchart TB
+    subgraph CI["1. CI/CD Pipeline (GitHub Actions)"]
+        Dev[Developer] -->|git push| GH[GitHub Repository]
+        GH --> GHA[GitHub Actions Workflow]
+        GHA --> Build[Docker Build]
+        Build --> Scan{Trivy Security Gate}
+        Scan -->|Pass| GHCR[(GHCR Registry<br/>SHA Tagged)]
+        Scan -->|Fail| Block[Pipeline Blocked]
+        GHA -->|helm upgrade --install| K8sCluster
+    end
 
-    subgraph Cluster[Kubernetes Cluster - namespace: app]
-        Ingress[Ingress] --> Svc[Service - ClusterIP, named port http]
+    subgraph K8sCluster["2. Kubernetes Production Cluster (namespace: app)"]
+        User((External User)) --> Ingress[Ingress Controller]
+        Ingress --> Svc[Service<br/>ClusterIP / Port http]
         Svc --> Pod[Pod: REST API]
-        HPA[HPA - min/max tiered by env, cpu target] -.scales.-> Pod
-        SA[ServiceAccount] -.attached.-> Pod
-        Role[Role - least privilege] --> RB[RoleBinding] --> SA
-        SealedSecret[SealedSecret] -->|decrypted by controller| Secret[Secret] --> Pod
-        NetPol[NetworkPolicy - default deny + allow from ingress-nginx] -.protects.-> Pod
-        CM[ConfigMap] --> Pod
+
+        GHCR -.->|image pull| Pod
+
+        subgraph Security["Security & Configuration Layer"]
+            SA[ServiceAccount] -.-> Pod
+            Role[Role / RBAC] --> SA
+            Secret[Secret] -.-> Pod
+            SealedSecret -->|decrypted by controller| Secret
+            NetPol[NetworkPolicy<br/>Default Deny] -.-> Pod
+            CM[ConfigMap] -.-> Pod
+        end
+
+        subgraph Scaling["Autoscaling"]
+            HPA[HPA<br/>CPU / Env Tiered] -.->|scales| Pod
+        end
+    end
+
+    subgraph Obs["3. Observability & Monitoring (monitoring ns)"]
         SM[ServiceMonitor] -.scrapes /metrics.-> Pod
-    end
-
-    subgraph Monitoring[monitoring namespace]
         Prom[Prometheus] -->|scrape via SM| SM
-        Prom --> Graf[Grafana]
+        Prom --> Graf[Grafana Dashboards]
     end
 
-    GHCR -->|image pull| Pod
-    User[External User] --> Ingress
+    %% Styling Theme
+    style CI fill:#f8f9fa,stroke:#6c757d,stroke-width:2px
+    style K8sCluster fill:#eef5ff,stroke:#0d6efd,stroke-width:2px
+    style Obs fill:#f1f8f4,stroke:#198754,stroke-width:2px
+    style Scan fill:#fff3cd,stroke:#ffc107,stroke-width:2px
+    style Security fill:#fdfdfe,stroke:#adb5bd,stroke-dasharray: 5 5
+    style Scaling fill:#fdfdfe,stroke:#adb5bd,stroke-dasharray: 5 5
 ```
 
 ## Repository Structure
@@ -87,19 +168,19 @@ devops-k8s-pipeline/
 
 ## Kubernetes Manifests
 
-| File | Purpose | Key detail |
-|---|---|---|
-| `namespace.yaml` | Isolates all app resources in the `app` namespace | Also templated in the Helm chart, see [Helm Chart](#helm-chart) for the namespace-adoption pattern this requires |
-| `deployment.yaml` | Runs the REST API pods | Rolling update strategy: `maxSurge: 1`, `maxUnavailable: 0`, zero downtime during rollouts; requests/limits set so the scheduler and HPA can both function |
-| `service.yaml` | Stable internal DNS + load balancing to pods | `ClusterIP`, internal only, exposed externally via Ingress; port is explicitly **named** (`http`) so the `ServiceMonitor` can target it |
-| `configmap.yaml` | Non-secret app configuration | Consumed via `envFrom` |
-| `hpa.yaml` | Autoscaling | Bounds and CPU target are tiered per environment, see [HPA & metrics-server](#hpa--metrics-server) |
-| `ingress.yaml` | External HTTP routing into the cluster | Routes to the `service.yaml` ClusterIP |
-| `networkpolicy.yaml` | Restricts which traffic can reach the pod | Default-deny ingress, explicit allow only from the `ingress-nginx` namespace via `namespaceSelector` |
-| `serviceaccount.yaml` | Dedicated pod identity | Named, not `default`, `automountServiceAccountToken: false` since the app never calls the Kubernetes API |
-| `role.yaml` / `rolebinding.yaml` | Least-privilege RBAC | Scoped to the `app` namespace only |
-| `sealedsecret.yaml` | Encrypted credential delivery | Safe to commit, decrypted only by the in-cluster Sealed Secrets controller |
-| `servicemonitor.yaml` | Tells Prometheus what to scrape | Selector must match the Service's own labels exactly; targets the Service's named `http` port, not a raw port number |
+| File                             | Purpose                                           | Key detail                                                                                                                                                 |
+| -------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `namespace.yaml`                 | Isolates all app resources in the `app` namespace | Also templated in the Helm chart, see [Helm Chart](#helm-chart) for the namespace-adoption pattern this requires                                           |
+| `deployment.yaml`                | Runs the REST API pods                            | Rolling update strategy: `maxSurge: 1`, `maxUnavailable: 0`, zero downtime during rollouts; requests/limits set so the scheduler and HPA can both function |
+| `service.yaml`                   | Stable internal DNS + load balancing to pods      | `ClusterIP`, internal only, exposed externally via Ingress; port is explicitly **named** (`http`) so the `ServiceMonitor` can target it                    |
+| `configmap.yaml`                 | Non-secret app configuration                      | Consumed via `envFrom`                                                                                                                                     |
+| `hpa.yaml`                       | Autoscaling                                       | Bounds and CPU target are tiered per environment, see [HPA & metrics-server](#hpa--metrics-server)                                                         |
+| `ingress.yaml`                   | External HTTP routing into the cluster            | Routes to the `service.yaml` ClusterIP                                                                                                                     |
+| `networkpolicy.yaml`             | Restricts which traffic can reach the pod         | Default-deny ingress, explicit allow only from the `ingress-nginx` namespace via `namespaceSelector`                                                       |
+| `serviceaccount.yaml`            | Dedicated pod identity                            | Named, not `default`, `automountServiceAccountToken: false` since the app never calls the Kubernetes API                                                   |
+| `role.yaml` / `rolebinding.yaml` | Least-privilege RBAC                              | Scoped to the `app` namespace only                                                                                                                         |
+| `sealedsecret.yaml`              | Encrypted credential delivery                     | Safe to commit, decrypted only by the in-cluster Sealed Secrets controller                                                                                 |
+| `servicemonitor.yaml`            | Tells Prometheus what to scrape                   | Selector must match the Service's own labels exactly; targets the Service's named `http` port, not a raw port number                                       |
 
 ## Security Design
 
@@ -205,19 +286,19 @@ Fixed by annotating the Namespace as a Helm hook, in `helm/app-chart/templates/n
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ .Values.namespace }}
+  name: { { .Values.namespace } }
   annotations:
-    "helm.sh/hook": pre-install
-    "helm.sh/hook-weight": "-5"
+    'helm.sh/hook': pre-install
+    'helm.sh/hook-weight': '-5'
 ```
 
-`pre-install` runs the Namespace as its own phase *before* the rest of the chart's resources are submitted, and Helm blocks until that phase completes, which is exactly the wait that closes the race. Deliberately scoped to `pre-install` only, not `pre-upgrade`: once the namespace exists, later `helm upgrade` runs skip this phase entirely, so there's no "already exists" conflict on every subsequent deploy. No `hook-delete-policy` is set, since deleting the Namespace would cascade-delete everything inside it, `helm uninstall` still tears the whole release down normally.
+`pre-install` runs the Namespace as its own phase _before_ the rest of the chart's resources are submitted, and Helm blocks until that phase completes, which is exactly the wait that closes the race. Deliberately scoped to `pre-install` only, not `pre-upgrade`: once the namespace exists, later `helm upgrade` runs skip this phase entirely, so there's no "already exists" conflict on every subsequent deploy. No `hook-delete-policy` is set, since deleting the Namespace would cascade-delete everything inside it, `helm uninstall` still tears the whole release down normally.
 
 Verified on a genuinely fresh cluster (`minikube delete && minikube start`, no manual `kubectl create namespace` beforehand): `helm install` succeeded on the first attempt, no race error.
 
 **Bootstrap order matters on a fresh cluster.** `ServiceMonitor` is a Custom Resource Definition installed by the Prometheus Operator, not a built-in Kubernetes kind, installing this app chart before `kube-prometheus-stack` fails with `no matches for kind "ServiceMonitor" in version "monitoring.coreos.com/v1"`, since the CRD simply doesn't exist yet. The monitoring stack must be installed first. See [Local Deployment](#local-deployment-minikube) for the corrected order.
 
-**Always pass `--namespace` explicitly on `helm install`/`helm upgrade`.** Each manifest in this chart sets its own `metadata.namespace` via `{{ .Values.namespace }}`, but that's independent of which namespace *Helm's own release bookkeeping* uses, without an explicit `--namespace` flag, Helm records the release under whatever namespace your current `kubectl` context defaults to (often `default`), even while the actual pods land correctly in `app`. The split is silent: `kubectl get pods -n app` looks fine, but `helm list` and future `helm upgrade`/`helm uninstall` calls against the wrong namespace fail or operate on nothing.
+**Always pass `--namespace` explicitly on `helm install`/`helm upgrade`.** Each manifest in this chart sets its own `metadata.namespace` via `{{ .Values.namespace }}`, but that's independent of which namespace _Helm's own release bookkeeping_ uses, without an explicit `--namespace` flag, Helm records the release under whatever namespace your current `kubectl` context defaults to (often `default`), even while the actual pods land correctly in `app`. The split is silent: `kubectl get pods -n app` looks fine, but `helm list` and future `helm upgrade`/`helm uninstall` calls against the wrong namespace fail or operate on nothing.
 
 **ServiceMonitor wiring:** a `ServiceMonitor`'s `selector.matchLabels` must match the target `Service`'s labels exactly, and its `endpoints[].port` refers to a **named** Service port (`name: http`), not a bare port number, a Service with an unnamed port gives the ServiceMonitor nothing to resolve, even with a perfectly correct selector. Confirmed working via Prometheus's own target list (`serviceMonitor/app/api/0`, state `UP`).
 
@@ -298,14 +379,14 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: api
-  namespace: {{ .Values.namespace }}
+  namespace: { { .Values.namespace } }
 spec:
   selector:
     matchLabels:
       app: api
   namespaceSelector:
     matchNames:
-      - {{ .Values.namespace }}
+      - { { .Values.namespace } }
   endpoints:
     - port: http
       path: /metrics
