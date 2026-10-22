@@ -118,7 +118,7 @@ flowchart TB
     style Scaling fill:#fdfdfe,stroke:#adb5bd,stroke-dasharray: 5 5
 ```
 
-## Repository Structure
+## 📁 Repository Structure
 
 ```
 devops-k8s-pipeline/
